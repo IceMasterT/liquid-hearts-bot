@@ -4,8 +4,9 @@ import { getPrivateKeyBase58 } from "./utils/getPrivateKeyBase58";
 import { getUserFromDB } from "./utils/getUserFromDB";
 import { saveUserData } from "./utils/saveUserData";
 import "dotenv/config";
+import { updateAndSaveReferData } from "./utils/updateAndSaveReferData";
 
-const BOT_NAME = "LiquidHeartsBot";
+// const BOT_NAME = "LiquidHeartsBot";
 
 const bot = new Bot(process.env.BOT_TOKEN!);
 
@@ -15,19 +16,22 @@ const bagsLink = `${webLink}/bags`;
 const directoryUrl = `${process.env.WEB_LINK}/directory`;
 const sendTokensUrl = `${process.env.WEB_LINK}/send_tokens`;
 
-const buildMainMenuButtons = () => [
+const buildMainMenuButtons = (id: number) => [
   [
-    InlineKeyboard.text("Check Bags 💰", `check-bags`),
-    InlineKeyboard.text("Display Leaderboard 🏆", "display-leaderboard"),
+    InlineKeyboard.webApp("Check Bags 💰", `${bagsLink}?user=${id}`),
+    InlineKeyboard.webApp("Display Status 🏆", `${directoryUrl}?user=${id}`)
   ],
   [
-    InlineKeyboard.text("Send Tokens 💸", "send-tokens"),
-    InlineKeyboard.text("Join Group 👋", "join-group"),
+    InlineKeyboard.webApp("Send Tokens 💸", `${sendTokensUrl}?user=${id}`),
+    InlineKeyboard.url("Join Group 👋", `https://t.me/LiquidHeartsClub`),
   ],
 ];
 
 bot.command("start", async (ctx) => {
   if (!ctx.from) return;
+
+  const referrerId = ctx.message.text.replace("/start ", "");
+
   const waitText = "Wait for a moment to the bot to initialize...";
 
   const messageEntity = await ctx.reply(waitText);
@@ -59,7 +63,38 @@ bot.command("start", async (ctx) => {
       referredUsers: 0,
     };
 
-    await saveUserData(newUser);
+    const insertedId = await saveUserData(newUser);
+
+    if (referrerId) {
+      const referrer = await getUserFromDB(Number(referrerId));
+
+      if (referrer?._id) {
+        await updateAndSaveReferData(referrer?._id, insertedId);
+        await bot.api.deleteMessage(messageEntity.chat.id, messageEntity.message_id);
+
+        await bot.api.sendMessage(Number(referrerId), `Congratulations! ${newUser.firstName} activated on Liquid Hearts Club from your link. Your share of the next airdrop just increased by 100 points! Send them a [welcome message](https://t.me/${newUser.username}) so they feel at home.`, {
+          parse_mode: "Markdown",
+        });
+
+        await ctx.reply(`Congratulations! By following ${referrer.firstName}'s activation link, your share of the next airdrop increased by 100 points! Send them a [thank you message](https://t.me/${referrer.username}) for inviting you to Liquid Hearts Club.`, {
+          parse_mode: "Markdown"
+        });
+
+        await ctx.reply("I’ve created your Social Wallet! ❤️‍🔥\nHere is your wallet address:");
+        await ctx.reply(newUser.addressPublicKey);
+        await ctx.reply("Here is your personal Activation Link. When your friends activate Liquid Hearts Club through this link, you’ll increase your share of the next airdrop! 🪂")
+        await ctx.reply(`https://t.me/LiquidHeartsBot?start=${newUser.telegramId}`);
+        await ctx.reply("What would you like to do next?", {
+            reply_markup: {
+              inline_keyboard: buildMainMenuButtons(ctx.from.id),
+            }
+          }
+        );
+
+        return;
+      }
+    }
+
     savedUser = newUser;
   }
 
@@ -69,7 +104,7 @@ bot.command("start", async (ctx) => {
   await ctx.reply(savedUser?.addressPublicKey || "");
   await ctx.reply(secondText, {
     reply_markup: {
-      inline_keyboard: buildMainMenuButtons()
+      inline_keyboard: buildMainMenuButtons(ctx.from.id)
     }
   })
 });
@@ -82,35 +117,11 @@ bot.catch((error) => {
   error.ctx.reply(genericErrorMessage);
 });
 
-// const buildSendTokenButtons = (userId: number) => [
-//   [
-//     InlineKeyboard.text("🪧 Main Menu", "main-menu"),
-//     InlineKeyboard.webApp("👀 Check Bags", `${bagsLink}?user=${userId}`),
-//   ],
-//   [
-//     InlineKeyboard.webApp("💸 Send Tokens", `${sendTokensUrl}?user=${userId}`),
-//     InlineKeyboard.webApp("📖 Directory", `${directoryUrl}?user=${userId}`),
-//   ],
-//   [InlineKeyboard.text("🪄Apps", "open-apps")],
-// ];
-
-// const buildMagicAppsButtons = (userId: number) => [
-//   [
-//     InlineKeyboard.text("🪧 Main Menu", "main-menu"),
-//     InlineKeyboard.webApp("👀 Check Bags", `${bagsLink}?user=${userId}`),
-//   ],
-//   [
-//     InlineKeyboard.text("💰Add Tokens", "add-tokens"),
-//     InlineKeyboard.webApp("💸 Send Tokens", `${sendTokensUrl}?user=${userId}`),
-//   ],
-//   [InlineKeyboard.webApp("📖 Directory", `${directoryUrl}?user=${userId}`)],
-// ];
-
 const showMenu = async (ctx: Context) => {
-  const text = `👋 Hey! Do you want to check your Saddlebags, add tokens, send tokens to a friend, search the membership directory or mess around with some magic apps?`;
+  const text = `👋 Hey! Do you want to check your bags, display your status, send tokens or join the group?`;
   await ctx.reply(text, {
     reply_markup: {
-      inline_keyboard: buildMainMenuButtons(),
+      inline_keyboard: buildMainMenuButtons(ctx.from?.id || 0),
     },
   });
 };
@@ -121,17 +132,16 @@ const showCheckBags = async (ctx: Context) => {
     {
       reply_markup: {
         inline_keyboard: [[InlineKeyboard.webApp("Check Bags 💰", `${bagsLink}?user=${ctx.from?.id}`)]]
-      } 
-    }
+      }}
   )
 }
 
 const showDisplayLeaderboard = async (ctx: Context) => {
-  const text = "Where do you rank? Let’s display the leaderboard and find out.";
+  const text = "Where do you rank? Let’s display the status and find out.";
   await ctx.reply(text, 
     {
       reply_markup: {
-        inline_keyboard: [[InlineKeyboard.webApp("Display Leaderboard 🏆", `${directoryUrl}?user=${ctx.from?.id}`)]]
+        inline_keyboard: [[InlineKeyboard.webApp("Display Status 🏆", `${directoryUrl}?user=${ctx.from?.id}`)]]
       } 
     }
   )
@@ -159,41 +169,11 @@ const showJoinGroup = async (ctx: Context) => {
   )
 }
 
-// const showAddTokens = async (ctx: Context) => {
-//   const user = await getUserFromDB(ctx.from!.id);
-//   const text = `👋 Hey! Want to add tokens to your Saddlebags? Just copy your own personal Saddlebags address on the Solana network (I’ll drop it below) and you can send 'em right there!\n\n🤝 Your Saddlebags address:`;
-//
-//   await ctx.reply(text);
-//   await ctx.reply(user?.addressPublicKey || "", {
-//     reply_markup: {
-//       inline_keyboard: buildSendTokenButtons(ctx.from!.id),
-//     },
-//   });
-// };
-
-// const showMagicApps = async (ctx: Context) => {
-//   const text = `👋 Hey! You can use your points in any of these magical apps! (Actually, there’s just one for now, but it’s super cool! If you’re a developer, creator or project founder and you want to add you’re own app to Saddlebags, let us know at https://saddlebags.xyz/).\n\n😱 Moral Panic: A massively-multiplayer on-chain game.\n\nJoin a club, form a guild, build an empire… for fun, profit and the thrill of planetary ecosystem collapse!\n\nStart here: https://t.me/MoralPanicBot`;
-//
-//   await ctx.reply(text, {
-//     reply_markup: {
-//       inline_keyboard: buildMagicAppsButtons(ctx.from!.id),
-//     },
-//   });
-// };
-
-bot.callbackQuery("main-menu", showMenu);
-// bot.callbackQuery("add-tokens", showAddTokens);
-bot.callbackQuery("check-bags", showCheckBags);
-bot.callbackQuery("send-tokens", showSendTokens);
-bot.callbackQuery("join-group", showJoinGroup);
-bot.callbackQuery("display-leaderboard", showDisplayLeaderboard);
-
 bot.command("main", showMenu);
-// bot.command("add", showAddTokens);
 bot.command("bags", showCheckBags);
 bot.command("send", showSendTokens);
 bot.command("join", showJoinGroup);
-bot.command("leaderboard", showDisplayLeaderboard);
+bot.command("status", showDisplayLeaderboard);
 
 bot.api.setMyCommands([
   {
@@ -204,29 +184,17 @@ bot.api.setMyCommands([
     command: "bags",
     description: "Check Bags",
   },
-  // {
-  //   command: "add",
-  //   description: "Add Tokens",
-  // },
   {
     command: "send",
     description: "Send Tokens",
   },
-  // {
-  //   command: "members",
-  //   description: "Membership Directory",
-  // },
-  // {
-  //   command: "apps",
-  //   description: "Magic Apps",
-  // },
   {
     command: "join",
     description: "Join Group"
   },
   {
-    command: "leaderboard",
-    description: "Display Leaderboard"
+    command: "status",
+    description: "Display Status"
   }
 ]);
 

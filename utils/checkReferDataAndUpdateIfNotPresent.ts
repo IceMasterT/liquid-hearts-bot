@@ -6,7 +6,7 @@ import { getUserFromDB } from "./getUserFromDB";
 export async function checkReferDataAndUpdateIfNotPresent(
   deepLinkId: number,
   currentUserId: number
-): Promise<string | undefined> {
+): Promise<boolean> {
   const userCollection = db.collection<DBUser>("users");
   const referrerLinksRelationCollection =
     db.collection<ReferralData>("referral_data");
@@ -33,6 +33,8 @@ export async function checkReferDataAndUpdateIfNotPresent(
         $inc: { referredUsers: 1 },
       }
     );
-    return deepLinkUser?.firstName;
+    return true;
   }
+
+  return false;
 }
