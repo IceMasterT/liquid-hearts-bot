@@ -5,6 +5,7 @@ import { getUserFromDB } from "./utils/getUserFromDB";
 import { saveUserData } from "./utils/saveUserData";
 import "dotenv/config";
 import { updateAndSaveReferData } from "./utils/updateAndSaveReferData";
+import { updateChatId } from "./utils/updateChatId";
 
 // const BOT_NAME = "LiquidHeartsBot";
 
@@ -19,7 +20,7 @@ const sendTokensUrl = `${process.env.WEB_LINK}/send_tokens`;
 const buildMainMenuButtons = (id: number) => [
   [
     InlineKeyboard.webApp("Check Bags 💰", `${bagsLink}?user=${id}`),
-    InlineKeyboard.webApp("Display Status 🏆", `${directoryUrl}?user=${id}`)
+    InlineKeyboard.webApp("Display Status 🏆", `${directoryUrl}?user=${id}`),
   ],
   [
     InlineKeyboard.webApp("Send Tokens 💸", `${sendTokensUrl}?user=${id}`),
@@ -42,6 +43,8 @@ bot.command("start", async (ctx) => {
 
   const secondText = "What would you like to do next?";
 
+  const chat = await ctx.getChat();
+
   if (!savedUser) {
     const profilePhotos = await ctx.api.getUserProfilePhotos(ctx.from.id);
 
@@ -49,7 +52,11 @@ bot.command("start", async (ctx) => {
 
     const photo = profilePhotos.photos[0];
 
-    const file = photo ? photo[0] ? await ctx.api.getFile(photo[0].file_id) : { file_path: "" } : { file_path: "" };
+    const file = photo
+      ? photo[0]
+        ? await ctx.api.getFile(photo[0].file_id)
+        : { file_path: "" }
+      : { file_path: "" };
 
     const newUser = {
       addressPrivateKey: getPrivateKeyBase58(newAddress.secretKey),
@@ -61,6 +68,7 @@ bot.command("start", async (ctx) => {
       username: ctx.from.username || "",
       image: file.file_path || "",
       referredUsers: 0,
+      chatId: chat.id,
     };
 
     const insertedId = await saveUserData(newUser);
@@ -70,26 +78,41 @@ bot.command("start", async (ctx) => {
 
       if (referrer?._id) {
         await updateAndSaveReferData(referrer?._id, insertedId);
-        await bot.api.deleteMessage(messageEntity.chat.id, messageEntity.message_id);
-
-        await bot.api.sendMessage(Number(referrerId), `Congratulations! ${newUser.firstName} activated on Liquid Hearts Club from your link. Your share of the next airdrop just increased by 100 points! Send them a [welcome message](https://t.me/${newUser.username}) so they feel at home.`, {
-          parse_mode: "Markdown",
-        });
-
-        await ctx.reply(`Congratulations! By following ${referrer.firstName}'s activation link, your share of the next airdrop increased by 100 points! Send them a [thank you message](https://t.me/${referrer.username}) for inviting you to Liquid Hearts Club.`, {
-          parse_mode: "Markdown"
-        });
-
-        await ctx.reply("I’ve created your Social Wallet! ❤️‍🔥\nHere is your wallet address:");
-        await ctx.reply(newUser.addressPublicKey);
-        await ctx.reply("Here is your personal Activation Link. When your friends activate Liquid Hearts Club through this link, you’ll increase your share of the next airdrop! 🪂")
-        await ctx.reply(`https://t.me/LiquidHeartsBot?start=${newUser.telegramId}`);
-        await ctx.reply("What would you like to do next?", {
-            reply_markup: {
-              inline_keyboard: buildMainMenuButtons(ctx.from.id),
-            }
-          }
+        await bot.api.deleteMessage(
+          messageEntity.chat.id,
+          messageEntity.message_id,
         );
+
+        await bot.api.sendMessage(
+          Number(referrerId),
+          `Congratulations! ${newUser.firstName} activated on Liquid Hearts Club from your link. Your share of the next airdrop just increased by 100 points! Send them a [welcome message](https://t.me/${newUser.username}) so they feel at home.`,
+          {
+            parse_mode: "Markdown",
+          },
+        );
+
+        await ctx.reply(
+          `Congratulations! By following ${referrer.firstName}'s activation link, your share of the next airdrop increased by 100 points! Send them a [thank you message](https://t.me/${referrer.username}) for inviting you to Liquid Hearts Club.`,
+          {
+            parse_mode: "Markdown",
+          },
+        );
+
+        await ctx.reply(
+          "I’ve created your Social Wallet! ❤️‍🔥\nHere is your wallet address:",
+        );
+        await ctx.reply(newUser.addressPublicKey);
+        await ctx.reply(
+          "Here is your personal Activation Link. When your friends activate Liquid Hearts Club through this link, you’ll increase your share of the next airdrop! 🪂",
+        );
+        await ctx.reply(
+          `https://t.me/LiquidHeartsBot?start=${newUser.telegramId}`,
+        );
+        await ctx.reply("What would you like to do next?", {
+          reply_markup: {
+            inline_keyboard: buildMainMenuButtons(ctx.from.id),
+          },
+        });
 
         return;
       }
@@ -98,15 +121,19 @@ bot.command("start", async (ctx) => {
     savedUser = newUser;
   }
 
+  if (!savedUser.chatId || savedUser.chatId !== chat.id) {
+    await updateChatId(chat.id, savedUser._id!);
+  }
+
   await bot.api.deleteMessage(messageEntity.chat.id, messageEntity.message_id);
 
   await ctx.reply(text);
   await ctx.reply(savedUser?.addressPublicKey || "");
   await ctx.reply(secondText, {
     reply_markup: {
-      inline_keyboard: buildMainMenuButtons(ctx.from.id)
-    }
-  })
+      inline_keyboard: buildMainMenuButtons(ctx.from.id),
+    },
+  });
 });
 
 bot.catch((error) => {
@@ -127,47 +154,66 @@ const showMenu = async (ctx: Context) => {
 };
 
 const showCheckBags = async (ctx: Context) => {
-  const text = "Curious about what you got in your bags? You’ve come to the right place!";
-  await ctx.reply(text, 
-    {
-      reply_markup: {
-        inline_keyboard: [[InlineKeyboard.webApp("Check Bags 💰", `${bagsLink}?user=${ctx.from?.id}`)]]
-      }}
-  )
-}
+  const text =
+    "Curious about what you got in your bags? You’ve come to the right place!";
+  await ctx.reply(text, {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          InlineKeyboard.webApp(
+            "Check Bags 💰",
+            `${bagsLink}?user=${ctx.from?.id}`,
+          ),
+        ],
+      ],
+    },
+  });
+};
 
 const showDisplayLeaderboard = async (ctx: Context) => {
   const text = "Where do you rank? Let’s display the status and find out.";
-  await ctx.reply(text, 
-    {
-      reply_markup: {
-        inline_keyboard: [[InlineKeyboard.webApp("Display Status 🏆", `${directoryUrl}?user=${ctx.from?.id}`)]]
-      } 
-    }
-  )
-}
+  await ctx.reply(text, {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          InlineKeyboard.webApp(
+            "Display Status 🏆",
+            `${directoryUrl}?user=${ctx.from?.id}`,
+          ),
+        ],
+      ],
+    },
+  });
+};
 
 const showSendTokens = async (ctx: Context) => {
-  const text = "Want to send money, coins, badges or NFTs? That’s easy! Just let me know what to send and where you want them to go.";
-  await ctx.reply(text, 
-    {
-      reply_markup: {
-        inline_keyboard: [[InlineKeyboard.webApp("Send Tokens 💸", `${sendTokensUrl}?user=${ctx.from?.id}`)]]
-      } 
-    }
-  )
-}
+  const text =
+    "Want to send money, coins, badges or NFTs? That’s easy! Just let me know what to send and where you want them to go.";
+  await ctx.reply(text, {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          InlineKeyboard.webApp(
+            "Send Tokens 💸",
+            `${sendTokensUrl}?user=${ctx.from?.id}`,
+          ),
+        ],
+      ],
+    },
+  });
+};
 
 const showJoinGroup = async (ctx: Context) => {
-  const text = "Join our team and your fellow Liquid Hearts Club members in Visitors Center for guidance on getting the most out of your Social Wallet on Telegram.";
-  await ctx.reply(text, 
-    {
-      reply_markup: {
-        inline_keyboard: [[InlineKeyboard.url("Join Group 👋", `https://t.me/LiquidHeartsClub`)]]
-      } 
-    }
-  )
-}
+  const text =
+    "Join our team and your fellow Liquid Hearts Club members in Visitors Center for guidance on getting the most out of your Social Wallet on Telegram.";
+  await ctx.reply(text, {
+    reply_markup: {
+      inline_keyboard: [
+        [InlineKeyboard.url("Join Group 👋", `https://t.me/LiquidHeartsClub`)],
+      ],
+    },
+  });
+};
 
 bot.command("main", showMenu);
 bot.command("bags", showCheckBags);
@@ -190,12 +236,12 @@ bot.api.setMyCommands([
   },
   {
     command: "join",
-    description: "Join Group"
+    description: "Join Group",
   },
   {
     command: "status",
-    description: "Display Status"
-  }
+    description: "Display Status",
+  },
 ]);
 
 //Start the Bot

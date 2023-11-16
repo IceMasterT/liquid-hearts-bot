@@ -11,4 +11,5 @@ export type DBUser = {
   image: string;
   bio: string;
   referredUsers: number;
+  chatId?: number;
 };
