@@ -1,4 +1,4 @@
-import { Bot, Context, InlineKeyboard } from "grammy";
+import { Bot, Context, GrammyError, HttpError, InlineKeyboard } from "grammy";
 import { createSolanaAddress } from "./utils/createSolanaAddress";
 import { getPrivateKeyBase58 } from "./utils/getPrivateKeyBase58";
 import { getUserFromDB } from "./utils/getUserFromDB";
@@ -6,6 +6,7 @@ import { saveUserData } from "./utils/saveUserData";
 import "dotenv/config";
 import { updateAndSaveReferData } from "./utils/updateAndSaveReferData";
 import { updateChatId } from "./utils/updateChatId";
+import { run } from "@grammyjs/runner";
 
 // const BOT_NAME = "LiquidHeartsBot";
 
@@ -16,6 +17,8 @@ const webLink = process.env.WEB_LINK!;
 const bagsLink = `${webLink}/bags`;
 const directoryUrl = `${process.env.WEB_LINK}/directory`;
 const sendTokensUrl = `${process.env.WEB_LINK}/send_tokens`;
+
+const runner = run(bot);
 
 const buildMainMenuButtons = (id: number) => [
   [
@@ -30,110 +33,123 @@ const buildMainMenuButtons = (id: number) => [
 
 bot.command("start", async (ctx) => {
   if (!ctx.from) return;
+  try {
+    const referrerId = ctx.message.text.replace("/start ", "");
 
-  const referrerId = ctx.message.text.replace("/start ", "");
+    const waitText = "Wait for a moment to the bot to initialize...";
 
-  const waitText = "Wait for a moment to the bot to initialize...";
+    const messageEntity = await ctx.reply(waitText);
 
-  const messageEntity = await ctx.reply(waitText);
+    let savedUser = await getUserFromDB(ctx.from.id);
 
-  let savedUser = await getUserFromDB(ctx.from.id);
+    const text = `Congratulations! You’ve created your Social Wallet! ❤️‍🔥\nHere is your wallet address:`;
 
-  const text = `Congratulations! You’ve created your Social Wallet! ❤️‍🔥\nHere is your wallet address:`;
+    const secondText = "What would you like to do next?";
 
-  const secondText = "What would you like to do next?";
+    const chat = await ctx.getChat();
 
-  const chat = await ctx.getChat();
+    if (!savedUser) {
+      const profilePhotos = await ctx.api.getUserProfilePhotos(ctx.from.id);
 
-  if (!savedUser) {
-    const profilePhotos = await ctx.api.getUserProfilePhotos(ctx.from.id);
+      const newAddress = createSolanaAddress();
 
-    const newAddress = createSolanaAddress();
+      const photo = profilePhotos.photos[0];
 
-    const photo = profilePhotos.photos[0];
+      const file = photo
+        ? photo[0]
+          ? await ctx.api.getFile(photo[0].file_id)
+          : { file_path: "" }
+        : { file_path: "" };
 
-    const file = photo
-      ? photo[0]
-        ? await ctx.api.getFile(photo[0].file_id)
-        : { file_path: "" }
-      : { file_path: "" };
+      const newUser = {
+        addressPrivateKey: getPrivateKeyBase58(newAddress.secretKey),
+        addressPublicKey: newAddress.publicKey.toBase58(),
+        bio: "",
+        firstName: ctx.from.first_name,
+        lastName: ctx.from.last_name || "",
+        telegramId: ctx.from.id,
+        username: ctx.from.username || "",
+        image: file.file_path || "",
+        referredUsers: 0,
+        chatId: chat.id,
+      };
 
-    const newUser = {
-      addressPrivateKey: getPrivateKeyBase58(newAddress.secretKey),
-      addressPublicKey: newAddress.publicKey.toBase58(),
-      bio: "",
-      firstName: ctx.from.first_name,
-      lastName: ctx.from.last_name || "",
-      telegramId: ctx.from.id,
-      username: ctx.from.username || "",
-      image: file.file_path || "",
-      referredUsers: 0,
-      chatId: chat.id,
-    };
+      const insertedId = await saveUserData(newUser);
 
-    const insertedId = await saveUserData(newUser);
+      if (referrerId) {
+        const referrer = await getUserFromDB(Number(referrerId));
 
-    if (referrerId) {
-      const referrer = await getUserFromDB(Number(referrerId));
+        if (referrer?._id) {
+          await updateAndSaveReferData(referrer?._id, insertedId);
+          await bot.api.deleteMessage(
+            messageEntity.chat.id,
+            messageEntity.message_id,
+          );
 
-      if (referrer?._id) {
-        await updateAndSaveReferData(referrer?._id, insertedId);
-        await bot.api.deleteMessage(
-          messageEntity.chat.id,
-          messageEntity.message_id,
-        );
+          await bot.api.sendMessage(
+            Number(referrerId),
+            `Congratulations! ${newUser.firstName} activated on Liquid Hearts Club from your link. Your share of the next airdrop just increased by 100 points! Send them a [welcome message](https://t.me/${newUser.username}) so they feel at home.`,
+            {
+              parse_mode: "Markdown",
+            },
+          );
 
-        await bot.api.sendMessage(
-          Number(referrerId),
-          `Congratulations! ${newUser.firstName} activated on Liquid Hearts Club from your link. Your share of the next airdrop just increased by 100 points! Send them a [welcome message](https://t.me/${newUser.username}) so they feel at home.`,
-          {
-            parse_mode: "Markdown",
-          },
-        );
+          await ctx.reply(
+            `Congratulations! By following ${referrer.firstName}'s activation link, your share of the next airdrop increased by 100 points! Send them a [thank you message](https://t.me/${referrer.username}) for inviting you to Liquid Hearts Club.`,
+            {
+              parse_mode: "Markdown",
+            },
+          );
 
-        await ctx.reply(
-          `Congratulations! By following ${referrer.firstName}'s activation link, your share of the next airdrop increased by 100 points! Send them a [thank you message](https://t.me/${referrer.username}) for inviting you to Liquid Hearts Club.`,
-          {
-            parse_mode: "Markdown",
-          },
-        );
+          await ctx.reply(
+            "I’ve created your Social Wallet! ❤️‍🔥\nHere is your wallet address:",
+          );
+          await ctx.reply(newUser.addressPublicKey);
+          await ctx.reply(
+            "Here is your personal Activation Link. When your friends activate Liquid Hearts Club through this link, you’ll increase your share of the next airdrop! 🪂",
+          );
+          await ctx.reply(
+            `https://t.me/LiquidHeartsBot?start=${newUser.telegramId}`,
+          );
+          await ctx.reply("What would you like to do next?", {
+            reply_markup: {
+              inline_keyboard: buildMainMenuButtons(ctx.from.id),
+            },
+          });
 
-        await ctx.reply(
-          "I’ve created your Social Wallet! ❤️‍🔥\nHere is your wallet address:",
-        );
-        await ctx.reply(newUser.addressPublicKey);
-        await ctx.reply(
-          "Here is your personal Activation Link. When your friends activate Liquid Hearts Club through this link, you’ll increase your share of the next airdrop! 🪂",
-        );
-        await ctx.reply(
-          `https://t.me/LiquidHeartsBot?start=${newUser.telegramId}`,
-        );
-        await ctx.reply("What would you like to do next?", {
-          reply_markup: {
-            inline_keyboard: buildMainMenuButtons(ctx.from.id),
-          },
-        });
-
-        return;
+          return;
+        }
       }
+
+      savedUser = newUser;
     }
 
-    savedUser = newUser;
+    if (!savedUser.chatId || savedUser.chatId !== chat.id) {
+      await updateChatId(chat.id, savedUser._id!);
+    }
+
+    await bot.api.deleteMessage(
+      messageEntity.chat.id,
+      messageEntity.message_id,
+    );
+
+    await ctx.reply(text);
+    await ctx.reply(savedUser?.addressPublicKey || "");
+    await ctx.reply(secondText, {
+      reply_markup: {
+        inline_keyboard: buildMainMenuButtons(ctx.from.id),
+      },
+    });
+  } catch (err) {
+    if (err instanceof GrammyError) {
+      console.log("Grammy error!");
+      console.error(err);
+    }
+    if (err instanceof HttpError) {
+      console.log("HTTP Error!");
+      console.error(err);
+    }
   }
-
-  if (!savedUser.chatId || savedUser.chatId !== chat.id) {
-    await updateChatId(chat.id, savedUser._id!);
-  }
-
-  await bot.api.deleteMessage(messageEntity.chat.id, messageEntity.message_id);
-
-  await ctx.reply(text);
-  await ctx.reply(savedUser?.addressPublicKey || "");
-  await ctx.reply(secondText, {
-    reply_markup: {
-      inline_keyboard: buildMainMenuButtons(ctx.from.id),
-    },
-  });
 });
 
 bot.catch((error) => {
@@ -141,7 +157,9 @@ bot.catch((error) => {
   console.log(error.stack);
   const genericErrorMessage =
     "Sorry, something went wrong. Please try again later or communicate with Support";
-  error.ctx.reply(genericErrorMessage);
+  try {
+    error.ctx.reply(genericErrorMessage);
+  } catch (_) {}
 });
 
 const showMenu = async (ctx: Context) => {
@@ -244,5 +262,7 @@ bot.api.setMyCommands([
   },
 ]);
 
-//Start the Bot
-bot.start();
+const stopRunner = () => runner.isRunning() && runner.stop();
+
+process.once("SIGINT", stopRunner);
+process.once("SIGTERM", stopRunner);
